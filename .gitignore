@@ -12,7 +12,6 @@
 .rstudio-prefs
 
 # Knitr and R Markdown report files
-*.html
 *.pdf
 
 # R Markdown cache
