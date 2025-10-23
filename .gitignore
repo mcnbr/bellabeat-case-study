@@ -1,0 +1,32 @@
+# History files
+.Rhistory
+.Rapp.history
+
+# Session Data
+.RData
+
+# User-specific files
+.Rproj.user/
+
+# RStudio files
+.rstudio-prefs
+
+# Knitr and R Markdown report files
+*.html
+*.pdf
+
+# R Markdown cache
+*_cache/
+/cache/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Data files
+data/

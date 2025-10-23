@@ -1,0 +1,61 @@
+---
+title: "Investigation minuteSleep → sleepDay"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(lubridate)
+library(readr)
+```
+
+```{r}
+# The sleepDay_merged.csv file does not exist in the "Fitabase Data 3.12.16-4.11.16" folder. To create it, I had to use the minuteSleep_merged.csv file, so I did this investigation to better interpret what the values in the 'value' column mean.
+
+minute_sleep <- read_csv("data/Fitabase Data 4.12.16-5.12.16/minuteSleep_merged.csv")
+sleep_day_original <- read_csv("data/Fitabase Data 4.12.16-5.12.16/sleepDay_merged.csv")
+
+sleep_day <- minute_sleep %>%
+mutate(
+date_time = mdy_hms(date),
+date = as_date(date_time)
+) %>%
+group_by(Id, date) %>%
+summarise(
+# 1 daily record per Id+date group
+TotalSleepRecords = 1,
+TotalMinutesAsleep = sum(value == 1, na.rm = TRUE),
+TotalMinutesRestless = sum(value == 2, na.rm = TRUE),
+TotalMinutesAwake = sum(value == 3, na.rm = TRUE),
+TotalTimeInBed = n()
+) %>%
+ungroup()
+sleep_day_summary <- sleep_day %>%
+group_by(Id) %>%
+summarise(
+total_days_recorded = n(), # sum of days with records
+mean_minutes_asleep = mean(TotalMinutesAsleep, na.rm=TRUE),
+mean_time_in_bed = mean(TotalTimeInBed, na.rm=TRUE)
+)
+sleep_day_original_summary <- sleep_day_original %>%
+group_by(Id) %>%
+summarise(
+total_days_recorded = n(),
+mean_minutes_asleep = mean(TotalMinutesAsleep, na.rm=TRUE),
+mean_time_in_bed = mean(TotalTimeInBed, na.rm=TRUE)
+)
+comparison <- sleep_day_summary %>%
+left_join(
+sleep_day_original_summary,
+by = "Id",
+suffix = c("_new", "_original")
+) %>%
+mutate(
+diff_mean_minutes_asleep = mean_minutes_asleep_new - mean_minutes_asleep_original,
+diff_mean_time_in_bed = mean_time_in_bed_new - mean_time_in_bed_original,
+diff_total_days = total_days_recorded_new - total_days_recorded_original
+)
+view(comparison)
+
+# The "comparison" dataframe shows that the assumption that 3 means being awake is correct, but it also shows that there are days being filtered, to determine the reason more investigation would be needed.
+```

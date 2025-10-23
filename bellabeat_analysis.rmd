@@ -1,0 +1,415 @@
+---
+title: "Bellabeat Case Study: Smart Device Usage Analysis (English)"
+author: "Maicon A Beyer"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+    df_print: paged
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = TRUE,
+                      fig.width = 8, fig.height = 5)
+options(scipen = 999, digits = 2)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(janitor)
+library(lubridate)
+```
+
+## 1. Introduction and Business Focus (Phase: Ask)
+
+### 1.1. Business Task
+
+Analyze smart device usage data (Fitbit) to uncover consumer behavior insights and provide high-level recommendations for Bellabeat's marketing strategy. The target is to identify patterns in activity and sleep and translate findings into actionable marketing/engagement recommendations.
+
+### 1.2. Analysis Questions
+
+1. What are the trends in smart device usage (activity, sedentary behavior, sleep)?
+2. How can these trends be applied to Bellabeat customers?
+3. Which recommendations and actions (Share/Act) should Bellabeat consider?
+
+## 2. Data Preparation (Phase: Prepare)
+
+### 2.1. Data Credibility (ROCCC Analysis)
+
+Data were sourced from a public Kaggle dataset ("FitBit Fitness Tracker Data").
+
+- Reliability (R): Low — sample is small (30 users) and not representative of Bellabeat's target audience (women).
+- Originality (O): High — data originate from Fitbit personal trackers (device-generated).
+- Comprehensiveness (C): Medium — includes activity, sleep and calories, but lacks women's health-specific metrics relevant to Bellabeat (e.g., hydration, menstrual cycle).
+- Currency (C): Low — data are from March–May 2016 and might not reflect current behavior.
+- Cited (C): Medium — widely used dataset without rich demographic detail.
+
+**Conclusion:** We'll proceed, highlighting sample and recency limitations in recommendations.
+
+## 3. Data Processing (Phase: Process)
+
+```{r}
+# Load and clean the input CSVs: daily activity, weight, and sleep
+# Daily activity files
+ids_para_excluir <- c("6391747486", "2891001357") #ids with few data entries
+daily_activity <- c(
+  "data/Fitabase Data 3.12.16-4.11.16/dailyActivity_merged.csv",
+  "data/Fitabase Data 4.12.16-5.12.16/dailyActivity_merged.csv"
+) %>%
+  map_dfr(~ read_csv(.x, col_select = c(Id, ActivityDate, TotalSteps, TotalDistance, VeryActiveMinutes, FairlyActiveMinutes, SedentaryMinutes, Calories))) %>%
+  clean_names() %>%
+  distinct() %>%
+  rename(date = activity_date) %>%
+  mutate(date = mdy(date)) %>%
+  filter(
+    !id %in% ids_para_excluir, #
+    (total_distance * 1000 / total_steps) < 1, #steps should correspond to less than 1m per step
+    total_steps > 0,
+    total_distance > 0,
+    sedentary_minutes < 1440,
+    calories > 1000 #lowest calorie level a human consumes is 1200 calories, let's consider a 20% margin of error
+  )
+
+# Weight log files (weight and BMI)
+weight_log <- c(
+  "data/Fitabase Data 4.12.16-5.12.16/weightLogInfo_merged.csv",
+  "data/Fitabase Data 3.12.16-4.11.16/weightLogInfo_merged.csv"
+) %>%
+  map_dfr(~ read_csv(.x, col_select = c(Id, Date, WeightKg, BMI))) %>%
+  clean_names() %>%
+  distinct() %>%
+  mutate(date = as_date(mdy_hms(date)))%>%
+  filter(!id %in% ids_para_excluir)
+
+# Sleep minute data combined and summarized by day
+sleep_day <- c(
+  "data/Fitabase Data 3.12.16-4.11.16/minuteSleep_merged.csv",
+  "data/Fitabase Data 4.12.16-5.12.16/minuteSleep_merged.csv"
+) %>%
+  map_dfr(~ read_csv(.x)) %>%
+  clean_names() %>%
+  distinct() %>%
+  mutate(date = as_date(mdy_hms(date))) %>%
+  filter(!id %in% ids_para_excluir)%>%
+  group_by(id, date) %>%
+  summarise(
+    total_minutes_asleep = sum(value == 1, na.rm = TRUE),
+    total_time_in_bed = n(),
+    .groups = "drop"
+  )
+# Hourly Steps files
+hourly_steps <- c(
+  "data/Fitabase Data 3.12.16-4.11.16/hourlySteps_merged.csv",
+  "data/Fitabase Data 4.12.16-5.12.16/hourlySteps_merged.csv"
+) %>%
+  map_dfr(read_csv) %>%
+  clean_names() %>%
+  distinct() %>%
+  mutate(
+    activity_hour = mdy_hms(activity_hour),
+    date = as_date(activity_hour),
+    hour_24 = format(activity_hour, "%H:%M")
+  ) %>%
+  select(id, date, hour_24, step_total)
+
+# Combine daily activity and sleep summaries
+daily_date <- daily_activity %>%
+  left_join(sleep_day, by = c("id", "date")) %>%
+  arrange(id, date)
+```
+
+## 4. Analysis and Results (Phase: Analyze)
+
+### 4.1. Visualizations and Findings
+
+```{r final_plots_en, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=6}
+
+
+# Create weekday factor starting on Monday
+daily_week <- daily_date %>%
+  mutate(
+    weekday = factor(
+      c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")[wday(date, week_start = 1)],
+      levels = c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
+    )
+  )
+
+
+
+# --- Weekday averages: steps, sedentary hours, sleep hours ----------------
+weekday_summary <- daily_week %>%
+  group_by(weekday) %>%
+  summarise(
+    mean_steps = mean(total_steps, na.rm = TRUE),
+    mean_sedentary_hr = mean(sedentary_minutes, na.rm = TRUE) / 60,
+    mean_sleep_hr = mean(total_minutes_asleep, na.rm = TRUE) / 60,
+    .groups = "drop"
+  ) %>%
+  arrange(factor(weekday, levels = c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")))
+
+# Average Steps by Weekday
+ggplot(weekday_summary, aes(x = weekday, y = mean_steps, fill = mean_steps)) +
+  geom_col() +
+  scale_fill_gradient(low = "#f1d6ff", high = "#9901e9") +
+  coord_cartesian(ylim = c(5000, NA)) +
+  labs(title = "Average Steps by Weekday (Mon -> Sun)", x = "Weekday", y = "Average Steps") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Average Sedentary Hours by Weekday
+ggplot(weekday_summary, aes(x = weekday, y = mean_sedentary_hr, fill = mean_sedentary_hr)) +
+  geom_col() +
+  scale_fill_gradient(low = "#f1d6ff", high = "#9901e9") +
+  coord_cartesian(ylim = c(10, NA)) +
+  labs(title = "Average Sedentary Time by Weekday (hours)", x = "Weekday", y = "Average Sedentary (hours)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Average Sleep by Weekday
+ggplot(weekday_summary, aes(x = weekday, y = mean_sleep_hr, fill = mean_sleep_hr)) +
+  geom_col() +
+  scale_fill_gradient(low = "#f1d6ff", high = "#9901e9") +
+  coord_cartesian(ylim = c(4, NA)) +
+  labs(title = "Average sleep by weekday (hours)", x = "Weekday", y = "Average sleep (hours)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# --- Pie chart: mean BMI per Id categorized into groups ----------------
+
+bmi_by_id <- weight_log %>%
+  group_by(id) %>%
+  summarise(mean_bmi = mean(bmi, na.rm = TRUE), .groups = "drop")
+
+# Ensure every Id in daily_date appears in bmi_by_id so we can count "missing" BMI
+bmi_by_id <- daily_date %>%
+  distinct(id) %>%
+  left_join(bmi_by_id, by = "id")
+
+bmi_levels <- c(
+  "underweight (<=18.4)",
+  "normal (18.5-24.9)",
+  "overweight (25-29.9)",
+  "obese (30-34.9)",
+  "extremely obese (>=35)",
+  "missing"
+)
+
+bmi_colors <- c(
+  "underweight (<=18.4)" = "#a6cee3",
+  "normal (18.5-24.9)" = "#b2df8a",
+  "overweight (25-29.9)" = "#fdbf6f",
+  "obese (30-34.9)" = "#fb9a99",
+  "extremely obese (>=35)" = "#d98080",
+  "missing" = "#BDBDBD"
+)
+
+bmi_cats <- bmi_by_id %>%
+  mutate(bmi_group = case_when(
+    is.na(mean_bmi) ~ "missing",
+    mean_bmi <= 18.4 ~ "underweight (<=18.4)",
+    mean_bmi >= 18.5 & mean_bmi <= 24.9 ~ "normal (18.5-24.9)",
+    mean_bmi >= 25.0 & mean_bmi <= 29.9 ~ "overweight (25-29.9)",
+    mean_bmi >= 30.0 & mean_bmi <= 34.9 ~ "obese (30-34.9)",
+    mean_bmi >= 35.0 ~ "extremely obese (>=35)",
+    TRUE ~ "missing"
+  )) %>%
+  mutate(bmi_group = factor(bmi_group, levels = bmi_levels)) %>%
+  count(bmi_group) %>%
+  arrange(match(bmi_group, bmi_levels)) %>%
+  mutate(pct = n / sum(n) * 100,
+         lbl = glue::glue("{bmi_group}\n{n} ({round(pct, 1)}%)"))
+
+ggplot(bmi_cats, aes(x = "", y = n, fill = bmi_group)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = lbl), position = position_stack(vjust = 0.5), size = 3) +
+  scale_fill_manual(values = bmi_colors, na.value = "#BDBDBD") +
+  labs(title = "User distribution by BMI category (mean BMI per Id)", x = NULL, y = NULL, fill = "BMI Category") +
+  theme_void() +
+  theme(legend.position = "right")
+
+# --- Scatterplots with highlighted recommended sleep band (7-9 hours) ----
+# Prepare points for scatterplots. We drop rows with missing key values and
+# also ignore records with extremely low total_steps (<20) which likely reflect
+# non-wear or invalid readings.
+daily_points <- daily_week %>%
+  mutate(
+    sedentary_hr = sedentary_minutes / 60,
+    sleep_hr = total_minutes_asleep / 60
+  ) %>%
+  # Exclude short sleep records (< 1 hour) as likely invalid or incomplete
+  filter(!is.na(sedentary_hr) & !is.na(sleep_hr) & !is.na(total_steps) & .data$total_steps >= 20 & .data$total_minutes_asleep >= 60)
+
+# join mean BMI per id to color points
+daily_points <- daily_points %>% left_join(bmi_by_id, by = "id")
+
+# categorize BMI per user (keep "missing" where appropriate)
+daily_points <- daily_points %>%
+  mutate(bmi_group = case_when(
+    !is.na(mean_bmi) & mean_bmi <= 18.4 ~ "underweight (<=18.4)",
+    !is.na(mean_bmi) & mean_bmi >= 18.5 & mean_bmi <= 24.9 ~ "normal (18.5-24.9)",
+    !is.na(mean_bmi) & mean_bmi >= 25.0 & mean_bmi <= 29.9 ~ "overweight (25-29.9)",
+    !is.na(mean_bmi) & mean_bmi >= 30.0 & mean_bmi <= 34.9 ~ "obese (30-34.9)",
+    !is.na(mean_bmi) & mean_bmi >= 35.0 ~ "extremely obese (>=35)",
+    TRUE ~ "missing"
+  )) %>%
+  mutate(bmi_group = factor(bmi_group, levels = c("underweight (<=18.4)", "normal (18.5-24.9)", "overweight (25-29.9)", "obese (30-34.9)", "extremely obese (>=35)", "missing")))
+
+present_levels <- levels(daily_points$bmi_group)
+plot_colors <- bmi_colors[present_levels]
+
+rect_ymin <- 7
+rect_ymax <- 9
+
+cor1 <- tryCatch(cor(daily_points$sedentary_hr, daily_points$sleep_hr, use = "complete.obs"), error = function(e) NA)
+ggplot(daily_points, aes(x = sedentary_hr, y = sleep_hr, color = bmi_group)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = rect_ymin, ymax = rect_ymax, alpha = 0.12, fill = "steelblue") +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "gray30", linetype = "dashed") +
+  labs(
+    title = "Sedentary (hours) vs Sleep (hours) — all days",
+    subtitle = paste0("Recommended sleep band: 7–9h | Pearson r = ", ifelse(is.na(cor1), "NA", round(cor1, 3))),
+    x = "Sedentary (hours)",
+    y = "Sleep (hours)"
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = plot_colors, na.value = "#BDBDBD", name = "BMI Category")  +
+  annotate("text", x = Inf, y = rect_ymax, label = "Ideal sleep band:\n7–9 hours", hjust = 1.05, vjust = 1, size = 3.5) +
+  theme(legend.position = "right")
+
+cor2 <- tryCatch(cor(daily_points$total_steps, daily_points$sleep_hr, use = "complete.obs"), error = function(e) NA)
+ggplot(daily_points, aes(x = total_steps, y = sleep_hr, color = bmi_group)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = rect_ymin, ymax = rect_ymax, alpha = 0.12, fill = "steelblue") +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "gray30", linetype = "dashed") +
+  labs(
+    title = "Total Steps vs Sleep (hours) — all days",
+    subtitle = paste0("Recommended sleep band: 7–9h | Pearson r = ", ifelse(is.na(cor2), "NA", round(cor2, 3))),
+    x = "Total steps",
+    y = "Sleep (hours)"
+  ) +
+   theme_minimal() +
+  scale_color_manual(values = plot_colors, na.value = "#BDBDBD", name = "BMI Category") + 
+  annotate("text", x = Inf, y = rect_ymax, label = "Ideal sleep band:\n7–9 hours", hjust = 1.05, vjust = 1, size = 3.5) +
+  theme(legend.position = "right")
+
+# --- Média de sono por grupo de IMC por dia da semana (Gráfico de Barras) ----
+
+sleep_bmi_weekday <- daily_points %>%
+  filter(bmi_group %in% c("normal (18.5-24.9)", "overweight (25-29.9)", "extremely obese (>=35)")) %>%
+  group_by(weekday, bmi_group) %>%
+  summarise(mean_sleep_hr = mean(sleep_hr, na.rm = TRUE), .groups = "drop")
+
+plot_colors_subset <- bmi_colors[names(bmi_colors) %in% unique(sleep_bmi_weekday$bmi_group)]
+
+ggplot(sleep_bmi_weekday, aes(x = weekday, y = mean_sleep_hr, fill = bmi_group)) +
+  geom_col(position = "dodge") +
+  coord_cartesian(ylim = c(4, NA)) +
+  scale_fill_manual(values = plot_colors_subset, name = "BMI Category") +
+  labs(
+    title = "Average Sleep Hours by BMI Group per Weekday",
+    x = "Weekday",
+    y = "Average Sleep (hours)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+#--- Average steps by hour of the day ----
+
+hourly_activity <- hourly_steps %>%
+  group_by(hour_24) %>%
+  summarise(
+    mean_steps = sum(step_total, na.rm = TRUE) / n()
+  )
+
+ggplot(hourly_activity, aes(x = hour_24, y = mean_steps, fill = mean_steps)) +
+  geom_col() +
+  scale_fill_gradient(
+    low = "#f1d6ff",
+    high = "#9901e9",
+    name = "Average Steps"
+  ) +
+  labs(
+    title = "Average Steps by Hour of the Day",
+    x = "Hour (24h)",
+    y = "Average Steps"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  )
+
+```
+
+### 4.2. Summary of Findings
+
+#### Trends in Smart Device Usage
+
+#### Activity Patterns
+- The average steps per day show that **Saturday** and **Tuesday** are the most active days, while **Sunday** and **Friday** have the lowest activity.
+- Peak activity hours during the day occur at **12 PM** and in the late afternoon (**6–7 PM**).
+
+#### Sedentary Behavior
+- Average sedentary hours are highest on **Friday**, followed by **Monday**, and significantly lower on **Saturday**.
+- Sedentary behavior is concentrated at the beginning and end of the workweek.
+
+#### Sleep Patterns
+- **Sunday** shows the highest average sleep, followed by **Wednesday**; **Saturday** also has a good average sleep duration.
+- **Thursday**, followed by **Monday** and **Tuesday**, shows the lowest sleep averages, indicating lower sleep quality after less active days.
+
+#### BMI and User Segmentation
+- Most users did not record their weight (**63.6% Missing**).
+- **12.1%** fall within the normal BMI range (18.5–24.9), **18.2%** are overweight, and **6.1%** are extremely obese (BMI ≥35).
+
+#### Correlations
+- **Sedentary behavior vs. sleep:** Pearson correlation **r = -0.712**, indicating that more sedentary time is associated with poorer sleep.
+- **Steps vs. sleep:** weak negative correlation (**r = -0.214**), suggesting that more steps do not necessarily increase sleep duration.
+- **Extremely obese users** tend to have shorter sleep duration compared to other Fitbit users.
+
+---
+
+## 5. Share (Phase: Share)
+
+### Application to Bellabeat Customers
+- **Activity Incentives:** communicate ideal hours to stay active based on peak activity times (**12 PM, 6–7 PM**).
+- **Sedentary Alerts:** strategic alerts could be sent on **Monday** and **Friday**, when sedentary time is highest.
+- **Sleep Guidance:** recommendations can target **Thursday, Monday, and Tuesday**, when sleep duration is lowest, to improve overall sleep quality.
+- **Targeted Messaging:** campaigns can segment users by BMI, highlighting that extremely obese users have distinct activity and sleep patterns.
+
+---
+
+## 6. Act (Phase: Act)
+
+### Top 3 Recommendations for Bellabeat
+
+Based on the insights from our analysis, we recommend the following strategic initiatives for Bellabeat's marketing and product teams:
+
+#### 1. Launch the "Move Well, Sleep Well" Campaign
+*   **Recommendation:** Create a marketing campaign centered on the strong link between lower sedentary time and better sleep. This positions Bellabeat not just as an activity tracker, but as a holistic wellness tool.
+*   **Actions:**
+    *   **Marketing:** Develop content (blog posts, social media) explaining the science behind activity and sleep. Use the tagline "Your best day starts the day before."
+    *   **Product:** Implement a new "Sleep Score Contributor" feature in the app that explicitly shows users how their daily sedentary minutes impacted their sleep quality from the previous night.
+
+#### 2. Implement Smart, Timely Notifications
+*   **Recommendation:** Use push notifications strategically to prompt activity when it's most needed and most likely to occur.
+*   **Actions:**
+    *   **Sedentary Alerts:** Send gentle reminders on Mondays and Fridays around 11 a.m. and 3 p.m. to encourage short breaks.
+    *   **Activity Prompts:** Send notifications for "Lunchtime Walks" (12-1 PM) and "Evening Wind-down Strolls" (6-7 PM) to capitalize on peak activity windows.
+    *   **Sleep Prep:** On Thursdays, when sleep is poorest, send a notification in the evening suggesting a relaxing activity to prepare for a better night's rest.
+
+#### 3. Develop Personalized, Data-Driven Content
+*   **Recommendation:** Enhance user engagement by showing them their own data in comparison to community trends.
+*   **Actions:**
+    *   **In-App Reports:** Create weekly summary reports in the app showing a user's activity and sleep patterns versus the (anonymized) average for users in their BMI category.
+    *   **Challenges:** Introduce targeted challenges, like a "Weekend Warrior" badge for hitting step goals on Saturday and Sunday, or a "Weekday Wellness" streak for reducing sedentary time Monday-Friday.
+
+### Next Steps
+- **Further Analysis:** Collect more recent and demographically relevant data to validate these findings. Specifically, data on Bellabeat's actual user base would be invaluable.
+- **A/B Testing:** Implement the suggested notification schedule for a small user segment to measure its impact on engagement metrics before a full rollout.
+
+### Notes and Caveats
+- Sample size (~35) and data age (2016) limit external validity.
